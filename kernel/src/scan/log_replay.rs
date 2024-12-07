@@ -259,12 +259,14 @@ pub fn scan_action_iter(
         Err(e) => return Box::new(std::iter::once(Err(e))),
     };
 
-    Box::new(action_iter
-        .map(move |action_res| {
-            let (batch, is_log_batch) = action_res?;
-            log_scanner.process_scan_batch(add_transform.as_ref(), batch.as_ref(), is_log_batch)
-        })
-        .filter(|res| res.as_ref().map_or(true, |(_, sv)| sv.contains(&true))))
+    Box::new(
+        action_iter
+            .map(move |action_res| {
+                let (batch, is_log_batch) = action_res?;
+                log_scanner.process_scan_batch(add_transform.as_ref(), batch.as_ref(), is_log_batch)
+            })
+            .filter(|res| res.as_ref().map_or(true, |(_, sv)| sv.contains(&true))),
+    )
 }
 
 #[cfg(test)]
