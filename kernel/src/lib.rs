@@ -298,6 +298,13 @@ pub trait ExpressionHandler: AsAny {
     /// - `expression`: Expression to evaluate.
     /// - `output_type`: Expected result data type.
     ///
+    /// # Returns
+    ///
+    /// Returns a `DeltaResult` containing the evaluator if successful. May fail if:
+    /// - The expression is invalid for the given schema
+    /// - The expression's output type doesn't match the expected output type
+    /// - The expression contains unsupported operations
+    ///
     /// [`Schema`]: crate::schema::StructType
     /// [`DataType`]: crate::schema::DataType
     fn get_evaluator(
@@ -305,7 +312,7 @@ pub trait ExpressionHandler: AsAny {
         schema: SchemaRef,
         expression: Expression,
         output_type: DataType,
-    ) -> Arc<dyn ExpressionEvaluator>;
+    ) -> DeltaResult<Arc<dyn ExpressionEvaluator>>;
 }
 
 /// Provides file system related functionalities to Delta Kernel.

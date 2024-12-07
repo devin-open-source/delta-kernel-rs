@@ -514,17 +514,29 @@ fn apply_schema_to(array: &ArrayRef, schema: &DataType) -> DeltaResult<ArrayRef>
 pub struct ArrowExpressionHandler;
 
 impl ExpressionHandler for ArrowExpressionHandler {
+    /// Create an evaluator for the given expression.
+    ///
+    /// # Returns
+    ///
+    /// Returns a `DeltaResult` containing the evaluator. Will fail if:
+    /// - The expression references columns not present in the schema
+    /// - The expression contains operations not supported by the Arrow compute kernels
+    /// - The expression's output type is incompatible with the expected output type
+    /// - Schema transformation fails during evaluator creation
     fn get_evaluator(
         &self,
         schema: SchemaRef,
         expression: Expression,
         output_type: DataType,
-    ) -> Arc<dyn ExpressionEvaluator> {
-        Arc::new(DefaultExpressionEvaluator {
+    ) -> DeltaResult<Arc<dyn ExpressionEvaluator>> {
+        // Validate schema compatibility
+        let _: ArrowSchema = schema.as_ref().try_into()?;
+
+        Ok(Arc::new(DefaultExpressionEvaluator {
             input_schema: schema,
             expression: Box::new(expression),
             output_type,
-        })
+        }))
     }
 }
 

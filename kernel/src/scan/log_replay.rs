@@ -200,11 +200,11 @@ impl LogReplayScanner {
         engine: &dyn Engine,
         table_schema: &SchemaRef,
         predicate: Option<ExpressionRef>,
-    ) -> Self {
-        Self {
-            filter: DataSkippingFilter::new(engine, table_schema, predicate),
+    ) -> DeltaResult<Self> {
+        Ok(Self {
+            filter: DataSkippingFilter::new(engine, table_schema, predicate)?,
             seen: Default::default(),
-        }
+        })
     }
 
     fn process_scan_batch(
@@ -241,22 +241,30 @@ impl LogReplayScanner {
 /// indicates whether the record batch is a log or checkpoint batch.
 pub fn scan_action_iter(
     engine: &dyn Engine,
-    action_iter: impl Iterator<Item = DeltaResult<(Box<dyn EngineData>, bool)>>,
+    action_iter: impl Iterator<Item = DeltaResult<(Box<dyn EngineData>, bool)>> + 'static,
     table_schema: &SchemaRef,
     predicate: Option<ExpressionRef>,
-) -> impl Iterator<Item = DeltaResult<ScanData>> {
-    let mut log_scanner = LogReplayScanner::new(engine, table_schema, predicate);
-    let add_transform = engine.get_expression_handler().get_evaluator(
+) -> Box<dyn Iterator<Item = DeltaResult<ScanData>>> {
+    let mut log_scanner = match LogReplayScanner::new(engine, table_schema, predicate) {
+        Ok(scanner) => scanner,
+        Err(e) => return Box::new(std::iter::once(Err(e))),
+    };
+
+    let add_transform = match engine.get_expression_handler().get_evaluator(
         get_log_add_schema().clone(),
         get_add_transform_expr(),
         SCAN_ROW_DATATYPE.clone(),
-    );
-    action_iter
+    ) {
+        Ok(transform) => transform,
+        Err(e) => return Box::new(std::iter::once(Err(e))),
+    };
+
+    Box::new(action_iter
         .map(move |action_res| {
             let (batch, is_log_batch) = action_res?;
             log_scanner.process_scan_batch(add_transform.as_ref(), batch.as_ref(), is_log_batch)
         })
-        .filter(|res| res.as_ref().map_or(true, |(_, sv)| sv.contains(&true)))
+        .filter(|res| res.as_ref().map_or(true, |(_, sv)| sv.contains(&true))))
 }
 
 #[cfg(test)]

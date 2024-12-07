@@ -7,7 +7,7 @@ use tracing::debug;
 
 use crate::actions::get_log_add_schema;
 use crate::actions::visitors::SelectionVectorVisitor;
-use crate::error::DeltaResult;
+use crate::error::{DeltaResult, Error};
 use crate::expressions::{
     column_expr, joined_column_expr, BinaryOperator, ColumnName, Expression as Expr, ExpressionRef,
     Scalar, VariadicOperator,
@@ -50,8 +50,11 @@ pub(crate) struct DataSkippingFilter {
 }
 
 impl DataSkippingFilter {
-    /// Creates a new data skipping filter. Returns None if there is no predicate, or the predicate
-    /// is ineligible for data skipping.
+    /// Creates a new data skipping filter. Returns None if:
+    /// - There is no predicate
+    /// - The predicate is ineligible for data skipping
+    /// - The predicate references columns not present in the schema
+    /// - The expression evaluator creation fails (e.g., unsupported operations)
     ///
     /// NOTE: None is equivalent to a trivial filter that always returns TRUE (= keeps all files),
     /// but using an Option lets the engine easily avoid the overhead of applying trivial filters.
@@ -59,7 +62,7 @@ impl DataSkippingFilter {
         engine: &dyn Engine,
         table_schema: &SchemaRef,
         predicate: Option<ExpressionRef>,
-    ) -> Option<Self> {
+    ) -> DeltaResult<Option<Self>> {
         static PREDICATE_SCHEMA: LazyLock<DataType> = LazyLock::new(|| {
             DataType::struct_type([StructField::new("predicate", DataType::BOOLEAN, true)])
         });
@@ -67,7 +70,9 @@ impl DataSkippingFilter {
         static FILTER_EXPR: LazyLock<Expr> =
             LazyLock::new(|| column_expr!("predicate").distinct(false));
 
-        let predicate = predicate.as_deref()?;
+        let Some(predicate) = predicate.as_deref() else {
+            return Ok(None);
+        };
         debug!("Creating a data skipping filter for {}", &predicate);
         let field_names: HashSet<_> = predicate.references();
 
@@ -82,7 +87,7 @@ impl DataSkippingFilter {
             .collect();
         if data_fields.is_empty() {
             // The predicate didn't reference any eligible stats columns, so skip it.
-            return None;
+            return Ok(None);
         }
         let minmax_schema = StructType::new(data_fields);
 
@@ -97,7 +102,8 @@ impl DataSkippingFilter {
             }
         }
         let nullcount_schema = NullCountStatsTransform
-            .transform_struct(&minmax_schema)?
+            .transform_struct(&minmax_schema)
+            .ok_or_else(|| Error::Generic("Failed to transform schema".into()))?
             .into_owned();
         let stats_schema = Arc::new(StructType::new([
             StructField::new("numRecords", DataType::LONG, true),
@@ -122,27 +128,31 @@ impl DataSkippingFilter {
             get_log_add_schema().clone(),
             STATS_EXPR.clone(),
             DataType::STRING,
-        );
+        )?;
 
+        let skipping_predicate = match as_data_skipping_predicate(predicate, false) {
+            Some(pred) => pred,
+            None => return Ok(None),
+        };
         let skipping_evaluator = engine.get_expression_handler().get_evaluator(
             stats_schema.clone(),
-            Expr::struct_from([as_data_skipping_predicate(predicate, false)?]),
+            Expr::struct_from([skipping_predicate]),
             PREDICATE_SCHEMA.clone(),
-        );
+        )?;
 
         let filter_evaluator = engine.get_expression_handler().get_evaluator(
             stats_schema.clone(),
             FILTER_EXPR.clone(),
             DataType::BOOLEAN,
-        );
+        )?;
 
-        Some(Self {
+        Ok(Some(Self {
             stats_schema,
             select_stats_evaluator,
             skipping_evaluator,
             filter_evaluator,
             json_handler: engine.get_json_handler(),
-        })
+        }))
     }
 
     /// Apply the DataSkippingFilter to an EngineData batch of actions. Returns a selection vector

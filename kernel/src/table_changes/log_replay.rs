@@ -53,7 +53,8 @@ pub(crate) fn table_changes_action_iter(
     table_schema: SchemaRef,
     predicate: Option<ExpressionRef>,
 ) -> DeltaResult<impl Iterator<Item = DeltaResult<TableChangesScanData>>> {
-    let filter = DataSkippingFilter::new(engine.as_ref(), &table_schema, predicate).map(Arc::new);
+    // Create data skipping filter, which may fail if predicate evaluation is not supported
+    let filter = DataSkippingFilter::new(engine.as_ref(), &table_schema, predicate)?.map(Arc::new);
     let result = commit_files
         .into_iter()
         .map(move |commit_file| -> DeltaResult<_> {
@@ -247,11 +248,12 @@ impl LogReplayScanner {
             schema,
             None,
         )?;
-        let evaluator = engine.get_expression_handler().get_evaluator(
+        let expression_handler = engine.get_expression_handler();
+        let adds_evaluator = expression_handler.get_evaluator(
             get_log_add_schema().clone(),
             add_transform_expr(),
             scan_row_schema().into(),
-        );
+        )?;
 
         let result = action_iter.map(move |actions| -> DeltaResult<_> {
             let actions = actions?;
@@ -267,7 +269,7 @@ impl LogReplayScanner {
             let mut visitor =
                 FileActionSelectionVisitor::new(&remove_dvs, selection_vector, has_cdc_action);
             visitor.visit_rows_of(actions.as_ref())?;
-            let scan_data = evaluator.evaluate(actions.as_ref())?;
+            let scan_data = adds_evaluator.evaluate(actions.as_ref())?;
             Ok(TableChangesScanData {
                 scan_data,
                 selection_vector: visitor.selection_vector,
