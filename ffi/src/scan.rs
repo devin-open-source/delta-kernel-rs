@@ -3,7 +3,7 @@
 use std::collections::HashMap;
 use std::sync::{Arc, Mutex};
 
-use delta_kernel::scan::state::{visit_scan_files, DvInfo, GlobalScanState};
+use delta_kernel::scan::state::{visit_scan_files, DvInfo, GlobalScanState, ScanFile};
 use delta_kernel::scan::{Scan, ScanData};
 use delta_kernel::schema::Schema;
 use delta_kernel::snapshot::Snapshot;
@@ -356,9 +356,10 @@ fn rust_callback(context: &mut ContextWrapper, file: ScanFile) {
     let stats = file.stats.map(|ks| Stats {
         num_records: ks.num_records,
     });
+    let path = file.path.as_str();
     (context.callback)(
         context.engine_context,
-        kernel_string_slice!(file.path),
+        kernel_string_slice!(path),
         file.size,
         stats.as_ref(),
         &file.dv_info,

@@ -201,7 +201,7 @@ impl<T> RowVisitor for ScanFileVisitor<'_, T> {
                     getters[9].get(row_index, "scanFile.fileConstantValues.partitionValues")?;
 
                 let scan_file = ScanFile {
-                    path: path.to_string(),
+                    path,
                     size,
                     stats,
                     dv_info,
